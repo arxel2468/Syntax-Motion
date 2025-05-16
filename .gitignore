@@ -10,6 +10,7 @@ yarn-error.log*
 pnpm-debug.log*
 .env
 .env.*
+!.env.example
 
 # --- Rust ---
 /target/
@@ -31,8 +32,25 @@ ENV/
 env.bak/
 *.env
 *.env.*
+!*.env.example
+backend/.venv/
+backend/venv/
+backend/.env
 
-# FastAPI specific (e.g., Uvicorn logs)
+# --- Media files ---
+backend/media/
+backend/media/videos/
+backend/media/texts/
+
+# --- Temporary files ---
+*/tmp*/
+*/temp*/
+*/*tmp*/
+*/*temp*/
+tmp/
+temp/
+
+# --- FastAPI specific ---
 *.log
 
 # --- IDEs and Editors ---
@@ -63,7 +81,15 @@ pytest_cache/
 htmlcov/
 coverage.xml
 
+# --- Project documentation files ---
+CONTEXT.md
+PROJECT_DOCS.md
+RUN_GUIDE.md
+
 # --- Optional: Remove if you want to keep lock files in all stacks ---
 # package-lock.json
 # yarn.lock
 # pnpm-lock.yaml
+
+cleanup.bat
+cleanup.bat
