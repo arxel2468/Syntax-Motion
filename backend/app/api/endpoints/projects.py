@@ -70,7 +70,7 @@ def update_project(
         )
     
     # Update project fields
-    for field, value in project.dict(exclude_unset=True).items():
+    for field, value in project.model_dump(exclude_unset=True).items():
         setattr(db_project, field, value)
     
     db.commit()

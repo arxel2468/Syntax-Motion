@@ -74,27 +74,34 @@ def get_scene(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Check if project exists and belongs to the user
-    project = db.query(Project).filter(
-        Project.id == project_id, 
-        Project.user_id == current_user.id
-    ).first()
-    if not project:
+    try:
+        # Check if project exists and belongs to the user
+        project = db.query(Project).filter(
+            Project.id == project_id, 
+            Project.user_id == current_user.id
+        ).first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+        
+        scene = db.query(Scene).filter(
+            Scene.id == scene_id,
+            Scene.project_id == project_id
+        ).first()
+        if not scene:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Scene not found"
+            )
+        return scene
+    except ValueError:
+        # Handle invalid UUID format
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
         )
-    
-    scene = db.query(Scene).filter(
-        Scene.id == scene_id,
-        Scene.project_id == project_id
-    ).first()
-    if not scene:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scene not found"
-        )
-    return scene
 
 @router.put("/{project_id}/scenes/{scene_id}", response_model=SceneResponse)
 def update_scene(
@@ -105,43 +112,61 @@ def update_scene(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Check if project exists and belongs to the user
-    project = db.query(Project).filter(
-        Project.id == project_id, 
-        Project.user_id == current_user.id
-    ).first()
-    if not project:
+    try:
+        # Check if project exists and belongs to the user
+        project = db.query(Project).filter(
+            Project.id == project_id, 
+            Project.user_id == current_user.id
+        ).first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+        
+        db_scene = db.query(Scene).filter(
+            Scene.id == scene_id,
+            Scene.project_id == project_id
+        ).first()
+        if not db_scene:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Scene not found"
+            )
+        
+        # Update scene fields
+        update_data = scene_update.model_dump(exclude_unset=True)
+        
+        # Check if we need to regenerate animation
+        regenerate = False
+        
+        # Regenerate if prompt is updated
+        if "prompt" in update_data and update_data["prompt"] != db_scene.prompt:
+            regenerate = True
+            
+        # Regenerate if status is changed from FAILED to PENDING
+        if ("status" in update_data and 
+            update_data["status"] == SceneStatus.PENDING and 
+            db_scene.status == SceneStatus.FAILED):
+            regenerate = True
+        
+        # Apply updates
+        for field, value in update_data.items():
+            setattr(db_scene, field, value)
+        
+        if regenerate:
+            db_scene.status = SceneStatus.PENDING
+            background_tasks.add_task(generate_animation, db_scene.id)
+        
+        db.commit()
+        db.refresh(db_scene)
+        return db_scene
+    except ValueError:
+        # Handle invalid UUID format
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid ID format"
         )
-    
-    db_scene = db.query(Scene).filter(
-        Scene.id == scene_id,
-        Scene.project_id == project_id
-    ).first()
-    if not db_scene:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scene not found"
-        )
-    
-    # Update scene fields
-    update_data = scene_update.dict(exclude_unset=True)
-    
-    # If prompt is updated, regenerate animation
-    regenerate = "prompt" in update_data and update_data["prompt"] != db_scene.prompt
-    
-    for field, value in update_data.items():
-        setattr(db_scene, field, value)
-    
-    if regenerate:
-        db_scene.status = SceneStatus.PENDING
-        background_tasks.add_task(generate_animation, db_scene.id)
-    
-    db.commit()
-    db.refresh(db_scene)
-    return db_scene
 
 @router.delete("/{project_id}/scenes/{scene_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_scene(

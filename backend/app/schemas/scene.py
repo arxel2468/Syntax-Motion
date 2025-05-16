@@ -1,5 +1,5 @@
 from pydantic import BaseModel, UUID4
-from typing import Optional
+from typing import Optional, ForwardRef
 from datetime import datetime
 from app.models.scene import SceneStatus
 
@@ -22,8 +22,9 @@ class SceneResponse(SceneBase):
     video_url: Optional[str] = None
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = {
+        "from_attributes": True
+    }
 
 class SceneDetail(SceneResponse):
     code: Optional[str] = None 
