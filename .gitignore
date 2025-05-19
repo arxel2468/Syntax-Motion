@@ -92,4 +92,4 @@ RUN_GUIDE.md
 # pnpm-lock.yaml
 
 cleanup.bat
-cleanup.bat
+cleanup.sh

@@ -1,124 +1,144 @@
 import os
 import tempfile
 import uuid
+import asyncio
+import re
 from manim import *
-from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.database import async_session_maker
 from app.models.scene import Scene, SceneStatus
 from app.models.video import Video
 from app.core.config import settings
 import httpx
+import logging
 
-def generate_animation(scene_id: uuid.UUID):
-    """Generate an animation for a scene."""
-    db = SessionLocal()
-    try:
-        # Get scene from database
-        scene = db.query(Scene).filter(Scene.id == scene_id).first()
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Constants for fallback scenes
+DEFAULT_SCENE_TEMPLATE = """from manim import *
+
+class GeneratedScene(Scene):
+    def construct(self):
+        title = Text("Animation Could Not Be Generated", font_size=42)
+        self.play(Write(title))
+        self.wait(2)
+"""
+
+FALLBACK_SCENE_TEMPLATE = """from manim import *
+
+class FallbackScene(Scene):
+    def construct(self):
+        title = Text("API Error", font_size=42, color=RED)
+        self.play(Write(title))
+        self.wait(2)
+"""
+
+async def generate_animation(scene_id: uuid.UUID):
+    """Generate an animation for a scene (async version)."""
+    async with async_session_maker() as db:
+        scene = await db.get(Scene, scene_id)
         if not scene:
+            logger.error(f"Scene {scene_id} not found")
             return
-        
-        # Update scene status
+
         scene.status = SceneStatus.PROCESSING
-        db.commit()
-        
+        await db.commit()
+
         try:
-            # Generate manim code from prompt using Groq
-            scene_code = generate_manim_code(scene.prompt)
-            
-            # Save generated code to scene
+            scene_code = await generate_manim_code(scene.prompt)
             scene.code = scene_code
-            db.commit()
-            
-            # Set up file paths
+            await db.commit()
+
             video_filename = f"{scene_id}.mp4"
             video_path = os.path.join(settings.VIDEO_DIR, video_filename)
-            
-            # Ensure directory exists
             os.makedirs(settings.VIDEO_DIR, exist_ok=True)
-            
-            # Create a temporary file to write the scene class
+
             with tempfile.NamedTemporaryFile(suffix='.py', mode='w', delete=False) as f:
                 temp_file_path = f.name
                 f.write(scene_code)
-            
+
             try:
-                # Execute manim to generate the animation
-                result = os.system(f"manim {temp_file_path} -o {video_path}")
-                
-                # Check if manim execution was successful
-                if result != 0:
-                    raise Exception(f"Manim execution failed with exit code {result}")
-                
-                # Update scene with video URL and status
+                class_name = extract_class_name(scene_code) or "Scene"
+                cmd = f"manim {temp_file_path} {class_name} -qm -o {video_path}"
+
+                # Run Manim asynchronously with timeout
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                try:
+                    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    raise Exception("Animation rendering timed out after 60 seconds")
+
+                if proc.returncode != 0:
+                    error_output = stderr.decode() if stderr else "Unknown error"
+                    raise Exception(f"Manim execution failed: {error_output}")
+
+                # Find and move the generated video
+                media_dir = os.path.join(os.path.dirname(video_path), "media")
+                video_files = [os.path.join(root, file)
+                               for root, _, files in os.walk(media_dir)
+                               for file in files if file.endswith(".mp4")]
+
+                if video_files:
+                    latest_video = max(video_files, key=os.path.getctime)
+                    os.rename(latest_video, video_path)
+                else:
+                    raise Exception("No video file generated")
+
                 scene.video_url = f"/media/videos/{video_filename}"
                 scene.status = SceneStatus.COMPLETED
-                
-                # Create video entry
-                video = Video(
-                    scene_id=scene.id,
-                    file_path=video_path,
-                    duration=5.0  # Default duration, can be updated later
-                )
+
+                video = Video(scene_id=scene.id, file_path=video_path, duration=5.0)
                 db.add(video)
-                db.commit()
-                
+                await db.commit()
+
             except Exception as e:
                 scene.status = SceneStatus.FAILED
                 scene.code = f"{scene_code}\n\n# Error: {str(e)}"
-                db.commit()
-                print(f"Animation generation failed: {e}")
+                await db.commit()
+                logger.error(f"Animation generation failed: {e}")
             finally:
-                # Clean up temporary file
                 if os.path.exists(temp_file_path):
                     os.unlink(temp_file_path)
-            
-        except Exception as e:
-            # Update scene status to failed in case of error
-            scene.status = SceneStatus.FAILED
-            db.commit()
-            raise e
-            
-    finally:
-        db.close()
 
-def generate_manim_code(prompt: str) -> str:
-    """Generate manim code from a prompt using Groq."""
-    # Set Groq API key
+        except Exception as e:
+            scene.status = SceneStatus.FAILED
+            await db.commit()
+            logger.error(f"Animation error: {e}")
+
+def extract_class_name(code: str) -> str:
+    """Extract Scene class name."""
+    match = re.search(r'class\s+(\w+)\s*\(\s*(?:manim\.)?Scene\s*\)', code)
+    return match.group(1) if match else None
+
+async def generate_manim_code(prompt: str) -> str:
+    """Generate Manim code via Groq API (async)."""
     groq_api_key = settings.GROQ_API_KEY
-    
-    # Define the system message
+    if not groq_api_key:
+        logger.error("Groq API key not configured")
+        return FALLBACK_SCENE_TEMPLATE
+
     system_message = """
-    You are an expert in Manim, a Python library for creating mathematical animations. 
-    Your task is to generate Manim code based on the user's description of an animation.
-    The code should be complete and runnable.
-    It should define a Scene class that can be rendered by Manim.
-    The animation should not be too complex and should render within a reasonable time.
-    
-    IMPORTANT RULES:
-    1. Ensure your Python code is syntactically correct with properly matching parentheses, brackets, and indentation.
-    2. Verify your self.play() calls have balanced parentheses.
-    3. Do not include any markdown formatting in your code.
-    4. Do NOT include any 'if __name__ == "__main__"' block or any code that would render the scene.
-    5. Make sure your code defines a single Scene class that inherits from Scene.
-    6. All animation code must be within the construct method.
-    7. Use only standard Manim objects and methods.
-    8. Do not use any external libraries besides manim.
+    You are a Manim expert. Generate OPTIMIZED, SHORT (5-10s) animations.
+    Follow rules: Fixed steps, no infinite loops, efficient self.play().
+    Ensure code is syntactically correct and runnable.
     """
-    
-    # Create the prompt for Groq
-    user_message = f"Create a Manim animation for: {prompt}. Make it visually appealing and professional. Include helpful comments in the code that explain what each section does."
-    
-    # Groq API endpoint
-    api_url = "https://api.groq.com/openai/v1/chat/completions"
-    
-    # Generate the code using Groq
-    headers = {
-        "Authorization": f"Bearer {groq_api_key}",
-        "Content-Type": "application/json"
-    }
-    
-    data = {
+
+    user_message = f"""Create a Manim animation for: {prompt}
+    Keep it short, efficient, and visually appealing.
+    IMPORTANT: Avoid infinite loops, use rate_functions, and limit animations to 5-10 seconds.
+    """
+
+    headers = {"Authorization": f"Bearer {groq_api_key}", "Content-Type": "application/json"}
+    payload = {
         "model": "llama3-70b-8192",
         "messages": [
             {"role": "system", "content": system_message},
@@ -127,142 +147,69 @@ def generate_manim_code(prompt: str) -> str:
         "max_tokens": 1000,
         "temperature": 0.7
     }
-    
-    # Make the API request
-    response = httpx.post(api_url, json=data, headers=headers)
-    response_data = response.json()
-    
-    # Extract the code from the response
-    code = response_data["choices"][0]["message"]["content"]
-    
-    # Clean up the code (remove markdown code blocks if present)
-    code = clean_code(code)
-    
-    # Ensure the code contains a proper Scene class
-    if "class" not in code or "Scene" not in code:
-        # The model failed to generate a proper scene, let's add a default one
-        code = """from manim import *
 
-class GeneratedScene(Scene):
-    def construct(self):
-        # Display a message indicating there was an issue with generation
-        title = Text("Animation Could Not Be Generated", font_size=42)
-        title.to_edge(UP)
-        
-        message = Text("The prompt could not be processed correctly.", font_size=28)
-        message.next_to(title, DOWN, buff=1)
-        
-        suggestion = Text("Try a different prompt with clearer instructions.", font_size=24)
-        suggestion.next_to(message, DOWN, buff=0.5)
-        
-        self.play(Write(title))
-        self.wait(0.5)
-        self.play(FadeIn(message))
-        self.wait(0.5)
-        self.play(FadeIn(suggestion))
-        self.wait(2)
-"""
-    
-    return code
+    async with httpx.AsyncClient(timeout=30) as client:
+        try:
+            response = await client.post("https://api.groq.com/openai/v1/chat/completions",
+                                         json=payload, headers=headers)
+            response.raise_for_status()
+            raw = response.json()["choices"][0]["message"]["content"]
+            code = extract_code_from_response(raw)
+            code = clean_code(code)
+
+            if "class" not in code or "Scene" not in code:
+                logger.warning("Groq returned invalid code; using default template")
+                return DEFAULT_SCENE_TEMPLATE
+
+            code = fix_potential_loops(code)
+            code = validate_parentheses(code)
+
+            return code
+        except httpx.HTTPError as e:
+            logger.error(f"Groq API error: {e}")
+            return FALLBACK_SCENE_TEMPLATE
+
+def extract_code_from_response(raw: str) -> str:
+    """Extract code block from Groq response."""
+    match = re.search(r'```python\n(.*?)```', raw, re.DOTALL)
+    return match.group(1).strip() if match else raw
 
 def clean_code(code: str) -> str:
-    """Clean up generated code to ensure it's valid Python."""
-    # Remove markdown code blocks
-    if "```python" in code:
-        code = code.split("```python")[1]
-    elif "```" in code:
-        code = code.split("```")[1]
-    
-    if code.endswith("```"):
-        code = code.rsplit("```", 1)[0]
-    
-    # Remove any lines with just the word "Python" (common in AI responses)
-    lines = code.strip().split('\n')
-    lines = [line for line in lines if line.strip() != "Python"]
-    
-    # Fix common typos in import statements
-    for i, line in enumerate(lines):
-        if "from maniml import" in line:
-            lines[i] = line.replace("maniml", "manim")
-    
-    # Completely remove any if __name__ == "__main__" block since this will be handled by the backend
-    cleaned_lines = []
-    skip_block = False
-    
-    for line in lines:
-        if 'if __name__ == "__main__"' in line or "if __name__ == '__main__'" in line:
-            skip_block = True
-            continue
-        
-        if skip_block and (line.strip() == "" or line.startswith(" ") or line.startswith("\t")):
-            continue
-        elif skip_block:
-            skip_block = False
-        
-        cleaned_lines.append(line)
-    
-    # Rejoin the lines
-    code = '\n'.join(cleaned_lines)
-    
-    # Ensure code is properly indented and parentheses are balanced
-    try:
-        # Try to compile the code to catch syntax errors
-        compile(code, '<string>', 'exec')
-    except SyntaxError as e:
-        # If there's a syntax error, add basic error handling
-        if "unmatched ')'" in str(e):
-            # Fix unbalanced parentheses in self.play() calls
-            code = fix_unbalanced_parentheses(code)
-    except NameError:
-        # Sometimes there are undefined variables
-        pass
-    
-    # Add imports if not present
-    if "from manim import" not in code:
-        code = "from manim import *\n\n" + code
-    
-    return code.strip()
+    """Remove markdown artifacts and comments."""
+    code = code.strip('`').replace('```python', '').replace('```', '')
+    code = re.sub(r'#.*$', '', code, flags=re.MULTILINE)  # Remove comments
+    return code
 
-def fix_unbalanced_parentheses(code: str) -> str:
-    """Basic function to attempt to fix unbalanced parentheses."""
-    # Find self.play calls with potential issues
-    lines = code.split('\n')
-    in_play_block = False
-    play_start_line = -1
-    fixed_lines = []
-    
-    for i, line in enumerate(lines):
-        if "self.play(" in line:
-            # Start of a self.play block
-            in_play_block = True
-            play_start_line = i
-            # Count opening and closing parentheses
-            open_count = line.count('(')
-            close_count = line.count(')')
-            
-            if open_count > close_count:
-                # We're in a multi-line self.play call
-                fixed_lines.append(line)
+def fix_potential_loops(code: str) -> str:
+    """Replace infinite loops with fixed iterations."""
+    code = re.sub(r'while\s+True', 'for _ in range(5)', code)
+    code = re.sub(r'while\s+1\b', 'for _ in range(5)', code)
+    return code
+
+def validate_parentheses(code: str) -> str:
+    """Basic check for balanced parentheses in self.play() calls."""
+    stack = []
+    for i, char in enumerate(code):
+        if char == '(':
+            stack.append(i)
+        elif char == ')':
+            if not stack:
+                logger.warning("Unbalanced parentheses detected; fixing...")
+                code = code[:i] + code[i+1:]  # Remove extra ')'
             else:
-                # It's a single line call, add it directly
-                fixed_lines.append(line)
-                in_play_block = False
-        elif in_play_block:
-            # We're in the middle of a play block
-            open_count = line.count('(')
-            close_count = line.count(')')
-            
-            # If this line has a comma followed by a closing parenthesis, it might be malformed
-            if "," in line and ")" in line and "," in line.split(")")[0]:
-                # Replace problematic comma+paren pattern
-                line = line.replace("),", ")")
-            
-            fixed_lines.append(line)
-            
-            # Check if we've closed the block
-            if close_count > open_count:
-                in_play_block = False
-        else:
-            fixed_lines.append(line)
-    
-    return '\n'.join(fixed_lines) 
+                stack.pop()
+    # If any '(' remains unclosed, append matching ')'
+    while stack:
+        logger.warning("Unbalanced parentheses detected; fixing...")
+        code += ')'
+        stack.pop()
+    return code
+
+if __name__ == "__main__":
+    # Test the Groq API integration
+    async def test_groq():
+        prompt = "A red ball bouncing 3 times"
+        code = await generate_manim_code(prompt)
+        print(code)
+
+    asyncio.run(test_groq())
