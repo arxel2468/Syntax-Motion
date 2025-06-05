@@ -3,8 +3,8 @@ import tempfile
 import uuid
 import shutil
 from manim import *
-from sqlalchemy.orm import Session
-from app.db.database import SessionLocal
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.database import async_session_maker
 from app.models.scene import Scene, SceneStatus
 from app.models.video import Video
 from app.core.config import settings
@@ -20,25 +20,19 @@ def generate_animation(scene_id: uuid.UUID):
         # Get scene from database
         scene = db.query(Scene).filter(Scene.id == scene_id).first()
         if not scene:
+            logger.error(f"Scene {scene_id} not found")
             return
-        
-        # Update scene status
+
         scene.status = SceneStatus.PROCESSING
-        db.commit()
-        
+        await db.commit()
+
         try:
-            # Generate manim code from prompt using Groq
-            scene_code = generate_manim_code(scene.prompt)
-            
-            # Save generated code to scene
+            scene_code = await generate_manim_code(scene.prompt)
             scene.code = scene_code
-            db.commit()
-            
-            # Set up file paths
+            await db.commit()
+
             video_filename = f"{scene_id}.mp4"
             video_path = os.path.join(settings.VIDEO_DIR, video_filename)
-            
-            # Ensure directory exists
             os.makedirs(settings.VIDEO_DIR, exist_ok=True)
             
             # Create a temporary file to write the scene class
@@ -114,8 +108,8 @@ def generate_animation(scene_id: uuid.UUID):
                     duration=duration
                 )
                 db.add(video)
-                db.commit()
-                
+                await db.commit()
+
             except Exception as e:
                 scene.status = SceneStatus.FAILED
                 scene.code = f"{scene_code}\n\n# Error: {str(e)}"
@@ -127,7 +121,6 @@ def generate_animation(scene_id: uuid.UUID):
                 shutil.rmtree(temp_dir, ignore_errors=True)
             
         except Exception as e:
-            # Update scene status to failed in case of error
             scene.status = SceneStatus.FAILED
             scene.code = f"# Error during code generation: {str(e)}"
             db.commit()
