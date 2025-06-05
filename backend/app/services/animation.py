@@ -12,125 +12,127 @@ import httpx
 import re
 import subprocess
 import traceback
+import logging
 
-def generate_animation(scene_id: uuid.UUID):
+logger = logging.getLogger(__name__)
+
+async def generate_animation(scene_id: uuid.UUID):
     """Generate an animation for a scene."""
-    db = SessionLocal()
-    try:
-        # Get scene from database
-        scene = db.query(Scene).filter(Scene.id == scene_id).first()
-        if not scene:
-            logger.error(f"Scene {scene_id} not found")
-            return
-
-        scene.status = SceneStatus.PROCESSING
-        await db.commit()
-
+    async with async_session_maker() as db:
         try:
-            scene_code = await generate_manim_code(scene.prompt)
-            scene.code = scene_code
+            # Get scene from database
+            scene = await db.get(Scene, scene_id)
+            if not scene:
+                logger.error(f"Scene {scene_id} not found")
+                return
+
+            scene.status = SceneStatus.PROCESSING
             await db.commit()
 
-            video_filename = f"{scene_id}.mp4"
-            video_path = os.path.join(settings.VIDEO_DIR, video_filename)
-            os.makedirs(settings.VIDEO_DIR, exist_ok=True)
-            
-            # Create a temporary file to write the scene class
-            # Use a temporary directory instead of a single file for better isolation
-            temp_dir = tempfile.mkdtemp()
             try:
-                temp_file_path = os.path.join(temp_dir, "scene.py")
-                with open(temp_file_path, "w") as f:
-                    f.write(scene_code)
-                
-                # Make sure the generated code is safe to execute
-                if not is_code_safe(scene_code):
-                    raise Exception("Generated code contains potentially unsafe operations")
-                
-                # Execute manim to generate the animation with a timeout
-                command = [
-                    "timeout", 
-                    str(settings.ANIMATION_TIMEOUT),
-                    "manim", 
-                    temp_file_path, 
-                    "-o", 
-                    video_path,
-                    "--quality", 
-                    "m"  # Medium quality for faster rendering
-                ]
-                
-                # Run the command
-                process = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    timeout=settings.ANIMATION_TIMEOUT
-                )
-                
-                # Check if manim execution was successful
-                if process.returncode != 0:
-                    error_message = f"Manim execution failed with code {process.returncode}:\n"
-                    error_message += process.stderr
-                    raise Exception(error_message)
-                
-                # Check if the video file actually exists
-                if not os.path.exists(video_path):
-                    raise Exception("Video file was not created after rendering")
-                
-                # Update scene with video URL and status
-                scene.video_url = f"/media/videos/{video_filename}"
-                scene.status = SceneStatus.COMPLETED
-                
-                # Get video duration using ffprobe
-                duration = 0.0
-                try:
-                    duration_cmd = [
-                        "ffprobe", 
-                        "-v", "error", 
-                        "-show_entries", "format=duration", 
-                        "-of", "default=noprint_wrappers=1:nokey=1", 
-                        video_path
-                    ]
-                    duration_output = subprocess.run(
-                        duration_cmd, 
-                        capture_output=True, 
-                        text=True
-                    )
-                    if duration_output.returncode == 0:
-                        duration = float(duration_output.stdout.strip())
-                except Exception as e:
-                    print(f"Error getting video duration: {str(e)}")
-                
-                # Create video entry
-                video = Video(
-                    scene_id=scene.id,
-                    file_path=video_path,
-                    duration=duration
-                )
-                db.add(video)
+                scene_code = await generate_manim_code(scene.prompt)
+                scene.code = scene_code
                 await db.commit()
 
+                video_filename = f"{scene_id}.mp4"
+                video_path = os.path.join(settings.VIDEO_DIR, video_filename)
+                os.makedirs(settings.VIDEO_DIR, exist_ok=True)
+                
+                # Create a temporary file to write the scene class
+                temp_dir = tempfile.mkdtemp()
+                try:
+                    temp_file_path = os.path.join(temp_dir, "scene.py")
+                    with open(temp_file_path, "w") as f:
+                        f.write(scene_code)
+                    
+                    # Make sure the generated code is safe to execute
+                    if not is_code_safe(scene_code):
+                        raise Exception("Generated code contains potentially unsafe operations")
+                    
+                    # Execute manim to generate the animation with a timeout
+                    command = [
+                        "timeout", 
+                        str(settings.ANIMATION_TIMEOUT),
+                        "manim", 
+                        temp_file_path, 
+                        "-o", 
+                        video_path,
+                        "--quality", 
+                        "m"  # Medium quality for faster rendering
+                    ]
+                    
+                    # Run the command
+                    process = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        timeout=settings.ANIMATION_TIMEOUT
+                    )
+                    
+                    # Check if manim execution was successful
+                    if process.returncode != 0:
+                        error_message = f"Manim execution failed with code {process.returncode}:\n"
+                        error_message += process.stderr
+                        raise Exception(error_message)
+                    
+                    # Check if the video file actually exists
+                    if not os.path.exists(video_path):
+                        raise Exception("Video file was not created after rendering")
+                    
+                    # Update scene with video URL and status
+                    scene.video_url = f"/media/videos/{video_filename}"
+                    scene.status = SceneStatus.COMPLETED
+                    
+                    # Get video duration using ffprobe
+                    duration = 0.0
+                    try:
+                        duration_cmd = [
+                            "ffprobe", 
+                            "-v", "error", 
+                            "-show_entries", "format=duration", 
+                            "-of", "default=noprint_wrappers=1:nokey=1", 
+                            video_path
+                        ]
+                        duration_output = subprocess.run(
+                            duration_cmd, 
+                            capture_output=True, 
+                            text=True
+                        )
+                        if duration_output.returncode == 0:
+                            duration = float(duration_output.stdout.strip())
+                    except Exception as e:
+                        logger.error(f"Error getting video duration: {str(e)}")
+                    
+                    # Create video entry
+                    video = Video(
+                        scene_id=scene.id,
+                        file_path=video_path,
+                        duration=duration
+                    )
+                    db.add(video)
+                    await db.commit()
+
+                except Exception as e:
+                    scene.status = SceneStatus.FAILED
+                    scene.code = f"{scene_code}\n\n# Error: {str(e)}"
+                    await db.commit()
+                    logger.error(f"Animation generation failed: {e}")
+                    traceback.print_exc()
+                finally:
+                    # Clean up temporary directory
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                
             except Exception as e:
                 scene.status = SceneStatus.FAILED
-                scene.code = f"{scene_code}\n\n# Error: {str(e)}"
-                db.commit()
-                print(f"Animation generation failed: {e}")
+                scene.code = f"# Error during code generation: {str(e)}"
+                await db.commit()
+                logger.error(f"Animation generation failed during preparation: {e}")
                 traceback.print_exc()
-            finally:
-                # Clean up temporary directory
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            
         except Exception as e:
-            scene.status = SceneStatus.FAILED
-            scene.code = f"# Error during code generation: {str(e)}"
-            db.commit()
-            print(f"Animation generation failed during preparation: {e}")
+            logger.error(f"Database operation failed: {e}")
             traceback.print_exc()
-            
-    finally:
-        db.close()
 
-def generate_manim_code(prompt: str) -> str:
+async def generate_manim_code(prompt: str) -> str:
     """Generate manim code from a prompt using Groq."""
     # Set Groq API key
     groq_api_key = settings.GROQ_API_KEY
@@ -196,8 +198,9 @@ def generate_manim_code(prompt: str) -> str:
     }
     
     # Make the API request
-    response = httpx.post(api_url, json=data, headers=headers, timeout=30)
-    response_data = response.json()
+    async with httpx.AsyncClient() as client:
+        response = await client.post(api_url, json=data, headers=headers, timeout=30)
+        response_data = response.json()
     
     # Extract the code from the response
     code = response_data["choices"][0]["message"]["content"]
