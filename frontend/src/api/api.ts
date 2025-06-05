@@ -106,6 +106,14 @@ class ApiService {
   async deleteScene(projectId: string, sceneId: string): Promise<void> {
     await this.api.delete(`/projects/${projectId}/scenes/${sceneId}`);
   }
+  
+  async refinePrompt(projectTitle: string, prompt: string): Promise<string> {
+    const response = await this.api.post<{ refined_prompt: string }>(
+      '/ai/refine-prompt',
+      { project_title: projectTitle, prompt }
+    );
+    return response.data.refined_prompt;
+  }
 }
 
 export const apiService = new ApiService(); 

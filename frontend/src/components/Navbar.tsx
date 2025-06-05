@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
+import { ROUTES } from '../utils/routePaths';
 
 const Navbar = () => {
   const { isAuthenticated, logout } = useAuthStore();
@@ -15,20 +17,22 @@ const Navbar = () => {
         <div className="flex justify-between h-16">
           <div className="flex">
             <div className="flex-shrink-0 flex items-center">
-              <img className="h-8 w-auto" src="/logo.svg" alt="Syntax Motion" />
-              <span className="ml-2 text-xl font-bold text-gray-900">Syntax Motion</span>
+              <Link to={isAuthenticated ? ROUTES.DASHBOARD : ROUTES.HOME}>
+                <img className="h-8 w-auto" src="/logo.svg" alt="Syntax Motion" />
+                <span className="ml-2 text-xl font-bold text-gray-900">Syntax Motion</span>
+              </Link>
             </div>
           </div>
           
           <div className="hidden sm:ml-6 sm:flex sm:items-center">
             {isAuthenticated ? (
               <>
-                <a href="/dashboard" className="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
+                <Link to={ROUTES.DASHBOARD} className="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
                   Dashboard
-                </a>
-                <a href="/projects" className="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
+                </Link>
+                <Link to={ROUTES.PROJECTS} className="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
                   Projects
-                </a>
+                </Link>
                 <button
                   onClick={logout}
                   className="ml-4 px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
@@ -38,12 +42,12 @@ const Navbar = () => {
               </>
             ) : (
               <>
-                <a href="/login" className="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
+                <Link to={ROUTES.LOGIN} className="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
                   Login
-                </a>
-                <a href="/register" className="ml-4 px-4 py-2 rounded-md text-sm font-medium text-white bg-primary hover:bg-primary-600">
+                </Link>
+                <Link to={ROUTES.REGISTER} className="ml-4 px-4 py-2 rounded-md text-sm font-medium text-white bg-primary hover:bg-primary-600">
                   Register
-                </a>
+                </Link>
               </>
             )}
           </div>
@@ -84,12 +88,12 @@ const Navbar = () => {
         <div className="pt-2 pb-3 space-y-1">
           {isAuthenticated ? (
             <>
-              <a href="/dashboard" className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
+              <Link to={ROUTES.DASHBOARD} className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
                 Dashboard
-              </a>
-              <a href="/projects" className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
+              </Link>
+              <Link to={ROUTES.PROJECTS} className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
                 Projects
-              </a>
+              </Link>
               <button
                 onClick={logout}
                 className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50"
@@ -99,12 +103,12 @@ const Navbar = () => {
             </>
           ) : (
             <>
-              <a href="/login" className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
+              <Link to={ROUTES.LOGIN} className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
                 Login
-              </a>
-              <a href="/register" className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
+              </Link>
+              <Link to={ROUTES.REGISTER} className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-gray-900 hover:bg-gray-50">
                 Register
-              </a>
+              </Link>
             </>
           )}
         </div>
@@ -113,4 +117,4 @@ const Navbar = () => {
   );
 };
 
-export default Navbar; 
+export default Navbar;

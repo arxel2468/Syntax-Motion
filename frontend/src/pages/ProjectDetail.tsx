@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useProjectStore } from '../store/projectStore';
 import { SceneStatus } from '../types';
 import SceneCard from '../components/SceneCard';
+import { apiService } from '../api/api';
 
 const ProjectDetail = () => {
   const { 
@@ -16,6 +17,7 @@ const ProjectDetail = () => {
   
   const [prompt, setPrompt] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [isRefining, setIsRefining] = useState(false);
   
   // Get projectId from URL
   const projectId = window.location.pathname.split('/').pop() || '';
@@ -72,6 +74,18 @@ const ProjectDetail = () => {
   const handleDeleteScene = (sceneId: string) => {
     if (!projectId || !window.confirm('Are you sure you want to delete this scene?')) return;
     deleteScene(projectId, sceneId);
+  };
+
+  const handleRefinePrompt = async () => {
+    setIsRefining(true);
+    try {
+      const refined = await apiService.refinePrompt(currentProject?.title || '', prompt);
+      setPrompt(refined);
+    } catch (err) {
+      alert('Failed to refine or generate prompt.');
+    } finally {
+      setIsRefining(false);
+    }
   };
 
   if (isLoading && !currentProject) {
@@ -136,14 +150,24 @@ const ProjectDetail = () => {
               <label htmlFor="prompt" className="block text-sm font-medium text-gray-700 mb-1">
                 Describe your animation
               </label>
-              <textarea
-                id="prompt"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                className="input w-full h-24"
-                placeholder="Example: A ball bouncing on a surface, demonstrating gravity and elasticity"
-                required
-              />
+              <div className="flex gap-2">
+                <textarea
+                  id="prompt"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  className="input w-full h-24"
+                  placeholder="Example: A ball bouncing on a surface, demonstrating gravity and elasticity"
+                  required
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary whitespace-nowrap"
+                  onClick={handleRefinePrompt}
+                  disabled={isRefining || isCreating || isLoading}
+                >
+                  {isRefining ? 'Refining...' : (prompt.trim() ? 'Refine using AI' : 'Generate a scene idea')}
+                </button>
+              </div>
             </div>
             <div className="flex justify-end">
               <button

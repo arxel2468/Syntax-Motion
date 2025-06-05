@@ -2,10 +2,12 @@ import os
 from fastapi import FastAPI, APIRouter, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.api import api_router
 from app.core.config import settings
 from app.db.database import engine, Base
+from app.core.middleware import rate_limit_middleware
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -28,6 +30,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add GZip compression
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Add rate limiting middleware
+app.middleware("http")(rate_limit_middleware)
+
 # Mount media directory for serving static files
 try:
     # Ensure the directory exists before mounting
@@ -42,7 +50,12 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 # Root endpoint
 @app.get("/")
 def root():
-    return {"message": "Welcome to the AI-Powered Animated Video Generator API"}
+    return {"message": f"Welcome to the {settings.PROJECT_NAME} API"}
+
+# Health check endpoint
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 @app.on_event("startup")
 async def startup_event():
@@ -60,4 +73,4 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

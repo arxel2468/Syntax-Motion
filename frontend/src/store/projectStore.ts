@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { apiService } from '../api/api';
+import { handleApiError } from '../utils/errorHandler';
 import type { Project, ProjectWithScenes, Scene, SceneDetail } from '../types';
 
 interface ProjectState {
@@ -8,7 +9,9 @@ interface ProjectState {
   currentScene: SceneDetail | null;
   isLoading: boolean;
   error: string | null;
-  
+}
+
+interface ProjectActions {
   fetchProjects: () => Promise<void>;
   fetchProject: (id: string) => Promise<void>;
   fetchScene: (projectId: string, sceneId: string) => Promise<void>;
@@ -18,24 +21,36 @@ interface ProjectState {
   createScene: (projectId: string, prompt: string, order?: number) => Promise<Scene>;
   updateScene: (projectId: string, sceneId: string, data: Partial<Scene>) => Promise<Scene>;
   deleteScene: (projectId: string, sceneId: string) => Promise<void>;
+  clearError: () => void;
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
+interface ProjectSelectors {
+  getProjectById: (id: string) => Project | undefined;
+}
+
+type ProjectStore = ProjectState & ProjectActions & ProjectSelectors;
+
+export const useProjectStore = create<ProjectStore>((set, get) => ({
+  // State
   projects: [],
   currentProject: null,
   currentScene: null,
   isLoading: false,
   error: null,
   
+  // Selectors
+  getProjectById: (id: string) => get().projects.find(p => p.id === id),
+  
+  // Actions
   fetchProjects: async () => {
     set({ isLoading: true, error: null });
     try {
       const projects = await apiService.getProjects();
       set({ projects, isLoading: false });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error fetching projects:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to fetch projects.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
     }
@@ -46,10 +61,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const project = await apiService.getProject(id);
       set({ currentProject: project, isLoading: false });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error fetching project:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to fetch project details.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
     }
@@ -60,10 +75,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const scene = await apiService.getScene(projectId, sceneId);
       set({ currentScene: scene, isLoading: false });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error fetching scene:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to fetch scene details.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
     }
@@ -78,10 +93,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         isLoading: false 
       }));
       return project;
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error creating project:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to create project.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
       throw error;
@@ -100,10 +115,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         isLoading: false
       }));
       return updatedProject;
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error updating project:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to update project.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
       throw error;
@@ -119,10 +134,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         currentProject: state.currentProject?.id === id ? null : state.currentProject,
         isLoading: false
       }));
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error deleting project:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to delete project.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
       throw error;
@@ -146,10 +161,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         return { isLoading: false };
       });
       return scene;
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error creating scene:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to create scene.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
       throw error;
@@ -183,10 +198,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         };
       });
       return updatedScene;
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error updating scene:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to update scene.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
       throw error;
@@ -213,13 +228,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           isLoading: false 
         };
       });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error deleting scene:', error);
       set({ 
-        error: error.response?.data?.detail || 'Failed to delete scene.', 
+        error: handleApiError(error), 
         isLoading: false 
       });
       throw error;
     }
   },
-})); 
+  
+  clearError: () => set({ error: null }),
+}));

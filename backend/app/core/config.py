@@ -39,6 +39,14 @@ class Settings(BaseModel):
     # Animation settings
     ANIMATION_TIMEOUT: int = 60 * 5  # 5 minutes
 
+    # Security settings
+    CODE_EXECUTION_TIMEOUT: int = int(os.getenv("CODE_EXECUTION_TIMEOUT", "300"))  # 5 min timeout
+    ALLOWED_MANIM_MODULES: list = ["manim", "numpy"]
+    
+    # Rate limiting
+    RATE_LIMIT_REQUESTS: int = int(os.getenv("RATE_LIMIT_REQUESTS", "10"))
+    RATE_LIMIT_WINDOW: int = int(os.getenv("RATE_LIMIT_WINDOW", "60"))  # seconds
+
     def __init__(self):
         # Ensure media directories exist
         super().__init__()
